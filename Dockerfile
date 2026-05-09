@@ -38,7 +38,8 @@ RUN echo '#!/bin/sh' > /app/start.sh && \
     echo 'sleep 10' >> /app/start.sh && \
     echo 'export PORT=8080' >> /app/start.sh && \
     echo 'java -jar api-gateway.jar &' >> /app/start.sh && \
-    echo 'sleep 5' >> /app/start.sh && \
+    echo 'sleep 15' >> /app/start.sh && \
+    echo 'echo "Starting nginx on port 80..."' >> /app/start.sh && \
     echo 'nginx -g "daemon off;"' >> /app/start.sh && \
     chmod +x /app/start.sh
 
