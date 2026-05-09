@@ -29,6 +29,9 @@ COPY frontend/style.css /usr/share/nginx/html/
 COPY frontend/script.js /usr/share/nginx/html/
 COPY nginx.conf /etc/nginx/nginx.conf
 
+# Inject API_BASE into index.html
+RUN sed -i "s|<head>|<head><script>window.API_BASE = '\${API_BASE}';</script>|g" /usr/share/nginx/html/index.html
+
 # Create startup script
 RUN echo '#!/bin/sh' > /app/start.sh && \
     echo 'export PORT=8081' >> /app/start.sh && \
