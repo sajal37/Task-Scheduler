@@ -42,7 +42,7 @@ wait_for_port() {
   local max=90
   local count=0
   echo "Waiting for $name on port $port..."
-  while ! curl -s -o /dev/null http://localhost:${port}/ 2>/dev/null; do
+  while ! curl -s -o /dev/null http://127.0.0.1:${port}/ 2>/dev/null; do
     count=$((count + 1))
     if [ $count -ge $max ]; then
       echo "Timeout waiting for $name after ${max}s" >&2
