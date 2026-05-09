@@ -1,5 +1,6 @@
 // ─── CONFIG ────────────────────────────────────────────────────────────────
-const API_BASE = window.API_BASE || "http://localhost:8080";
+// Auto-detect API_BASE: use window.API_BASE if set, otherwise use current origin
+const API_BASE = window.API_BASE || window.location.origin;
 
 // ─── STATE ─────────────────────────────────────────────────────────────────
 let currentUser = null;
