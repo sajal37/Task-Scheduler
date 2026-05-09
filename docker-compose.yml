@@ -1,0 +1,57 @@
+version: '3.8'
+services:
+  user-service:
+    build: ./user-service
+    ports:
+      - "8081:8081"
+    environment:
+      - PORT=8081
+      - JWT_SECRET=${JWT_SECRET}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
+    networks:
+      - task-scheduler-network
+
+  task-service:
+    build: ./task-service
+    ports:
+      - "8082:8082"
+    environment:
+      - PORT=8082
+      - USER_SERVICE_URL=http://user-service:8081
+      - JWT_SECRET=${JWT_SECRET}
+    depends_on:
+      - user-service
+    networks:
+      - task-scheduler-network
+
+  api-gateway:
+    build: ./api-gateway
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - USER_SERVICE_URL=http://user-service:8081
+      - TASK_SERVICE_URL=http://task-service:8082
+    depends_on:
+      - user-service
+      - task-service
+    networks:
+      - task-scheduler-network
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "80:80"
+    environment:
+      - API_BASE=${API_BASE:-http://localhost:8080}
+    depends_on:
+      - api-gateway
+    networks:
+      - task-scheduler-network
+
+networks:
+  task-scheduler-network:
+    driver: bridge
