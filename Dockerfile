@@ -29,8 +29,11 @@ COPY frontend/style.css /usr/share/nginx/html/
 COPY frontend/script.js /usr/share/nginx/html/
 COPY nginx.conf /etc/nginx/nginx.conf
 
-# Inject API_BASE into index.html
-RUN sed -i "s|<head>|<head><script>window.API_BASE = '\${API_BASE}';</script>|g" /usr/share/nginx/html/index.html
+# Inject API_BASE at runtime using entrypoint script
+RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
+    echo 'sed -i "s|\${API_BASE}|'"'"'$API_BASE'"'"'|g" /usr/share/nginx/html/index.html' >> /app/entrypoint.sh && \
+    echo 'exec /app/start.sh' >> /app/entrypoint.sh && \
+    chmod +x /app/entrypoint.sh
 
 # Create startup script
 RUN echo '#!/bin/sh' > /app/start.sh && \
@@ -48,4 +51,4 @@ RUN echo '#!/bin/sh' > /app/start.sh && \
     chmod +x /app/start.sh
 
 EXPOSE 80 8080 8081 8082
-CMD ["/app/start.sh"]
+CMD ["/app/entrypoint.sh"]
