@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestHeader;
 
-@FeignClient(name = "user-service", url = "${services.user-service.url:http://localhost:8081}")
+@FeignClient(name = "user-service", url = "${services.user-service.url:http://127.0.0.1:8081}")
 public interface UserServiceClient {
 
     @PostMapping("/api/auth/validate")
