@@ -23,7 +23,6 @@ COPY --from=build-user /app/target/*.jar user-service.jar
 COPY --from=build-task /app/target/*.jar task-service.jar
 COPY --from=build-gateway /app/target/*.jar api-gateway.jar
 
-# Install nginx and curl (for health checks)
 RUN apk add --no-cache nginx curl
 
 COPY frontend/index.html /usr/share/nginx/html/
@@ -31,7 +30,8 @@ COPY frontend/style.css /usr/share/nginx/html/
 COPY frontend/script.js /usr/share/nginx/html/
 COPY nginx.conf /etc/nginx/nginx.conf
 
-# Create startup script — uses TCP-level health checks (no -f flag so any HTTP response = success)
+# Startup script — CRITICAL: use PORT= not SERVER_PORT= because
+# Spring reads ${PORT:default} from application.properties
 RUN cat > /app/start.sh << 'STARTEOF'
 #!/bin/sh
 set -e
@@ -53,16 +53,15 @@ wait_for_port() {
   echo "$name is ready (port $port responding)."
 }
 
-# Start user-service on port 8081
-SERVER_PORT=8081 java -jar /app/user-service.jar &
+# Override PORT for each service — Railway may set PORT globally
+# but each microservice needs its own port
+PORT=8081 java -jar /app/user-service.jar &
 wait_for_port 8081 "user-service"
 
-# Start task-service on port 8082
-SERVER_PORT=8082 java -jar /app/task-service.jar &
+PORT=8082 java -jar /app/task-service.jar &
 wait_for_port 8082 "task-service"
 
-# Start api-gateway on port 8080
-SERVER_PORT=8080 java -jar /app/api-gateway.jar &
+PORT=8080 java -jar /app/api-gateway.jar &
 wait_for_port 8080 "api-gateway"
 
 echo "All services started. Starting nginx on port 80..."
@@ -70,12 +69,8 @@ exec nginx -g "daemon off;"
 STARTEOF
 RUN chmod +x /app/start.sh
 
-# Entrypoint: optional API_BASE injection then launch
 RUN cat > /app/entrypoint.sh << 'ENTRYEOF'
 #!/bin/sh
-if [ -n "$API_BASE" ]; then
-  sed -i "s|\${API_BASE}|$API_BASE|g" /usr/share/nginx/html/index.html
-fi
 exec /app/start.sh
 ENTRYEOF
 RUN chmod +x /app/entrypoint.sh
