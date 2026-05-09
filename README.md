@@ -1,4 +1,4 @@
-# TaskFlow — Project & Task Manager
+# Task Scheduler — Project & Task Manager
 
 A full-stack project management web app with role-based access control, built on a Spring Boot microservices backend and a plain HTML/CSS/JS frontend.
 

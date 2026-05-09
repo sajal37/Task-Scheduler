@@ -1,8 +1,9 @@
 # Railway Deployment Guide
 
-This guide will help you deploy the TaskFlow application to Railway.
+This guide will help you deploy the Task Scheduler application to Railway.
 
 ## Prerequisites
+
 - GitHub account
 - Railway account (sign up at https://railway.app)
 - Your code pushed to a GitHub repository
@@ -10,6 +11,7 @@ This guide will help you deploy the TaskFlow application to Railway.
 ## Step 1: Push Code to GitHub
 
 1. Initialize a git repository if not already done:
+
    ```bash
    git init
    git add .
@@ -42,10 +44,12 @@ This guide will help you deploy the TaskFlow application to Railway.
 After deployment, you need to configure environment variables for each service:
 
 ### For `api-gateway`:
+
 - `USER_SERVICE_URL`: The Railway URL of the user-service (e.g., `https://user-service-production.up.railway.app`)
 - `TASK_SERVICE_URL`: The Railway URL of the task-service (e.g., `https://task-service-production.up.railway.app`)
 
 ### For `user-service`:
+
 - `JWT_SECRET`: A secure 64+ character secret key for JWT signing
 - `GOOGLE_CLIENT_ID`: (Optional) Your Google OAuth client ID
 - `GOOGLE_CLIENT_SECRET`: (Optional) Your Google OAuth client secret
@@ -53,15 +57,18 @@ After deployment, you need to configure environment variables for each service:
 - `GITHUB_CLIENT_SECRET`: (Optional) Your GitHub OAuth client secret
 
 ### For `task-service`:
+
 - `USER_SERVICE_URL`: The Railway URL of the user-service
 - `JWT_SECRET`: Same as user-service JWT_SECRET
 
 ### For `frontend`:
+
 - `API_BASE`: The Railway URL of the api-gateway (e.g., `https://api-gateway-production.up.railway.app`)
 
 ## Step 4: Get Service URLs
 
 After deployment, Railway will provide URLs for each service:
+
 - `api-gateway`: `https://api-gateway-xxxx.up.railway.app`
 - `user-service`: `https://user-service-xxxx.up.railway.app`
 - `task-service`: `https://task-service-xxxx.up.railway.app`
@@ -96,17 +103,21 @@ Railway will use H2 in-memory databases by default. For production, you can add 
 ## Troubleshooting
 
 ### Services not communicating
+
 - Ensure `USER_SERVICE_URL` and `TASK_SERVICE_URL` are set correctly in api-gateway
 - Ensure `USER_SERVICE_URL` is set correctly in task-service
 
 ### CORS errors
+
 - The API Gateway CORS is configured to allow all origins, so this should not be an issue
 
 ### Database connection errors
+
 - If using Railway PostgreSQL, ensure the DATABASE_URL is set correctly
 - The format should be: `postgresql://username:password@host:port/database`
 
 ### Frontend not connecting to API
+
 - Ensure `API_BASE` is set correctly in the frontend service
 - The API_BASE should point to the api-gateway Railway URL
 

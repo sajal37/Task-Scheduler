@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────────
-#  TaskFlow – single-command launcher
+#  Task Scheduler – single-command launcher
 #  Usage:  .\start.ps1
 #  Stops:  Press Ctrl+C in this window, or run .\stop.ps1
 # ─────────────────────────────────────────────────────────────────
@@ -87,7 +87,7 @@ Start-Process $indexPath
 
 Write-Host ""
 Write-Host "════════════════════════════════════════════════════" -ForegroundColor Green
-Write-Host "  TaskFlow is running!" -ForegroundColor Green
+Write-Host "  Task Scheduler is running!" -ForegroundColor Green
 Write-Host ""
 Write-Host "  API Gateway  : http://localhost:8080" -ForegroundColor White
 Write-Host "  User Service : http://localhost:8081" -ForegroundColor White
