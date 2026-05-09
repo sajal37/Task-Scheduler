@@ -109,6 +109,24 @@ public class AuthService {
         return new UserDTO(user.getId(), user.getName(), user.getEmail());
     }
 
+    public UserDTO getUserByEmail(String email) throws Exception {
+        Optional<User> userOptional = userRepository.findByEmail(email);
+        if (userOptional.isEmpty()) {
+            throw new Exception("User not found");
+        }
+        User user = userOptional.get();
+        return new UserDTO(user.getId(), user.getName(), user.getEmail());
+    }
+
+    public UserDTO getUserById(Long id) throws Exception {
+        Optional<User> userOptional = userRepository.findById(id);
+        if (userOptional.isEmpty()) {
+            throw new Exception("User not found");
+        }
+        User user = userOptional.get();
+        return new UserDTO(user.getId(), user.getName(), user.getEmail());
+    }
+
     public boolean validateToken(String token) {
         return jwtUtil.validateToken(token);
     }

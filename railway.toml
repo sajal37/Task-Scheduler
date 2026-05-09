@@ -1,0 +1,21 @@
+[build]
+builder = "NIXPACKS"
+
+[[services]]
+name = "api-gateway"
+dockerfile = "api-gateway/Dockerfile"
+env = ["PORT=8080"]
+
+[[services]]
+name = "user-service"
+dockerfile = "user-service/Dockerfile"
+env = ["PORT=8081"]
+
+[[services]]
+name = "task-service"
+dockerfile = "task-service/Dockerfile"
+env = ["PORT=8082"]
+
+[[services]]
+name = "frontend"
+dockerfile = "frontend/Dockerfile"

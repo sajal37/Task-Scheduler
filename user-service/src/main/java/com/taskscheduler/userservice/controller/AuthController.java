@@ -83,6 +83,40 @@ public class AuthController {
         }
     }
 
+    @GetMapping("/lookup/email")
+    public ResponseEntity<?> getUserByEmail(@RequestParam String email, @RequestHeader("Authorization") String token) {
+        try {
+            if (token != null && token.startsWith("Bearer ")) {
+                String jwt = token.substring(7);
+                if (!authService.validateToken(jwt)) {
+                    return new ResponseEntity<>("Invalid token", HttpStatus.UNAUTHORIZED);
+                }
+                UserDTO user = authService.getUserByEmail(email);
+                return new ResponseEntity<>(user, HttpStatus.OK);
+            }
+            return new ResponseEntity<>("Invalid token", HttpStatus.BAD_REQUEST);
+        } catch (Exception e) {
+            return new ResponseEntity<>("Error getting user by email: " + e.getMessage(), HttpStatus.NOT_FOUND);
+        }
+    }
+
+    @GetMapping("/lookup/{id}")
+    public ResponseEntity<?> getUserById(@PathVariable Long id, @RequestHeader("Authorization") String token) {
+        try {
+            if (token != null && token.startsWith("Bearer ")) {
+                String jwt = token.substring(7);
+                if (!authService.validateToken(jwt)) {
+                    return new ResponseEntity<>("Invalid token", HttpStatus.UNAUTHORIZED);
+                }
+                UserDTO user = authService.getUserById(id);
+                return new ResponseEntity<>(user, HttpStatus.OK);
+            }
+            return new ResponseEntity<>("Invalid token", HttpStatus.BAD_REQUEST);
+        } catch (Exception e) {
+            return new ResponseEntity<>("Error getting user by id: " + e.getMessage(), HttpStatus.NOT_FOUND);
+        }
+    }
+
     // Google OAuth - Fixed redirect URI to use API Gateway port
     @GetMapping("/oauth2/authorize/google")
     public void authorizeGoogle(@RequestParam String redirect_uri, HttpServletResponse response) throws IOException {

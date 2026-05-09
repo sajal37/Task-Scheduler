@@ -1,662 +1,609 @@
-// Global variables
-let tasks = [];
+// ─── CONFIG ────────────────────────────────────────────────────────────────
+const API_BASE = window.API_BASE || "http://localhost:8080";
+
+// ─── STATE ─────────────────────────────────────────────────────────────────
 let currentUser = null;
-const API_BASE = 'http://localhost:8080'; // API Gateway URL
+let authToken = null;
+let currentProject = null; // full ProjectResponse object
+let projectMembers = []; // members of open project
+let tasks = []; // tasks of open project
 
-// OAuth Functions
-function signInWithGoogle() {
-    const redirectUri = encodeURIComponent('http://127.0.0.1:5500');
-    window.location.href = `${API_BASE}/api/auth/oauth2/authorize/google?redirect_uri=${redirectUri}`;
+// ─── HELPERS ───────────────────────────────────────────────────────────────
+function getToken() {
+  return authToken || localStorage.getItem("token");
 }
 
-function signUpWithGoogle() {
-    signInWithGoogle(); // Same flow for OAuth
+async function api(method, path, body) {
+  const opts = {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: "Bearer " + getToken(),
+    },
+  };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  const res = await fetch(API_BASE + path, opts);
+  if (res.status === 204) return null;
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.message || data.error || res.statusText);
+  return data;
 }
 
-function signInWithGitHub() {
-    const redirectUri = encodeURIComponent('http://127.0.0.1:5500');
-    window.location.href = `${API_BASE}/api/auth/oauth2/authorize/github?redirect_uri=${redirectUri}`;
+// ─── NOTIFICATIONS ─────────────────────────────────────────────────────────
+function notify(msg, type = "info") {
+  const area = document.getElementById("notificationArea");
+  const el = document.createElement("div");
+  el.className = `notif ${type}`;
+  el.textContent = msg;
+  area.appendChild(el);
+  setTimeout(() => el.remove(), 4000);
 }
 
-function signUpWithGitHub() {
-    signInWithGitHub(); // Same flow for OAuth
+// ─── AUTH ──────────────────────────────────────────────────────────────────
+function switchAuthTab(tab, btn) {
+  document
+    .querySelectorAll(".auth-tab")
+    .forEach((b) => b.classList.remove("active"));
+  document
+    .querySelectorAll(".auth-panel")
+    .forEach((p) => p.classList.remove("active"));
+  btn.classList.add("active");
+  document.getElementById(tab + "Panel").classList.add("active");
 }
 
-// Initialize app when page loads
-window.addEventListener('load', function() {
-    // Handle OAuth callback
-    const urlParams = new URLSearchParams(window.location.search);
-    const token = urlParams.get('token');
-    const error = urlParams.get('error');
-    
-    if (token) {
-        // Store token and authenticate
-        sessionStorage.setItem('authToken', token);
-        window.history.replaceState({}, document.title, window.location.pathname);
-        authenticateUser(token);
-    } else if (error) {
-        console.error('OAuth error:', error);
-        showNotification('Authentication failed: ' + error, 'error');
-        window.history.replaceState({}, document.title, window.location.pathname);
-    } else {
-        // Check if user is already logged in
-        const storedToken = sessionStorage.getItem('authToken');
-        if (storedToken) {
-            authenticateUser(storedToken);
-        }
-    }
-    
-    // Set up event listeners
-    setupEventListeners();
-    
-    // Set current datetime for form inputs
-    setDefaultDateTime();
-});
-
-function setupEventListeners() {
-    // Auth forms
-    const loginForm = document.getElementById('loginForm');
-    const registerForm = document.getElementById('registerForm');
-    const taskForm = document.getElementById('taskForm');
-    const editTaskForm = document.getElementById('editTaskForm');
-    
-    if (loginForm) {
-        loginForm.addEventListener('submit', handleLogin);
-    }
-    
-    if (registerForm) {
-        registerForm.addEventListener('submit', handleRegister);
-    }
-    
-    if (taskForm) {
-        taskForm.addEventListener('submit', handleAddTask);
-    }
-    
-    if (editTaskForm) {
-        editTaskForm.addEventListener('submit', handleEditTask);
-    }
-}
-
-function authenticateUser(token) {
-    fetch(`${API_BASE}/api/auth/user-info`, {
-        method: 'POST',
-        headers: {
-            'Authorization': 'Bearer ' + token,
-            'Content-Type': 'application/json'
-        }
-    })
-    .then(response => {
-        if (!response.ok) {
-            throw new Error('Authentication failed');
-        }
-        return response.json();
-    })
-    .then(user => {
-        if (user && user.name) {
-            currentUser = user;
-            showAuthenticatedUI();
-            loadTasks();
-        } else {
-            throw new Error('Invalid user data');
-        }
-    })
-    .catch(error => {
-        console.error('Error getting user info:', error);
-        sessionStorage.removeItem('authToken');
-        showNotification('Authentication failed. Please try again.', 'error');
-        showUnauthenticatedUI();
+async function handleLogin(e) {
+  e.preventDefault();
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  try {
+    const data = await fetch(API_BASE + "/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    }).then((r) => r.json().then((d) => ({ ok: r.ok, d })));
+    if (!data.ok) throw new Error(data.d.message || "Login failed");
+    finishAuth(data.d.token, {
+      id: data.d.id,
+      name: data.d.name,
+      email: data.d.email,
     });
+  } catch (err) {
+    notify(err.message, "error");
+  }
 }
 
-function showAuthenticatedUI() {
-    document.getElementById('authModal').style.display = 'none';
-    document.getElementById('welcomeScreen').style.display = 'none';
-    document.getElementById('authHeader').style.display = 'flex';
-    document.getElementById('mainContent').style.display = 'block';
-    document.getElementById('userName').textContent = currentUser.name;
-    
-    showNotification('Welcome back, ' + currentUser.name + '!', 'success');
+async function handleRegister(e) {
+  e.preventDefault();
+  const name = document.getElementById("regName").value.trim();
+  const email = document.getElementById("regEmail").value.trim();
+  const password = document.getElementById("regPassword").value;
+  const confirm = document.getElementById("regConfirm").value;
+  if (password !== confirm) {
+    notify("Passwords do not match", "error");
+    return;
+  }
+  try {
+    const data = await fetch(API_BASE + "/api/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, email, password, confirmPassword: confirm }),
+    }).then((r) => r.json().then((d) => ({ ok: r.ok, d })));
+    if (!data.ok) throw new Error(data.d.message || "Registration failed");
+    finishAuth(data.d.token, {
+      id: data.d.id,
+      name: data.d.name,
+      email: data.d.email,
+    });
+  } catch (err) {
+    notify(err.message, "error");
+  }
 }
 
-function showUnauthenticatedUI() {
-    document.getElementById('authHeader').style.display = 'none';
-    document.getElementById('mainContent').style.display = 'none';
-    document.getElementById('welcomeScreen').style.display = 'block';
+function finishAuth(token, user) {
+  authToken = token;
+  currentUser = user;
+  localStorage.setItem("token", token);
+  localStorage.setItem("user", JSON.stringify(user));
+  document.getElementById("authModal").classList.remove("active");
+  document.getElementById("app").style.display = "flex";
+  document.getElementById("sidebarUserName").textContent =
+    user.name || user.email;
+  document.getElementById("sidebarUserEmail").textContent = user.email || "";
+  document.getElementById("userAvatar").textContent = (user.name ||
+    user.email ||
+    "U")[0].toUpperCase();
+  loadDashboard();
 }
 
 function signOut() {
-    sessionStorage.removeItem('authToken');
-    currentUser = null;
-    tasks = [];
-    showUnauthenticatedUI();
-    showNotification('Signed out successfully', 'info');
+  authToken = null;
+  currentUser = null;
+  localStorage.removeItem("token");
+  localStorage.removeItem("user");
+  document.getElementById("app").style.display = "none";
+  document.getElementById("authModal").classList.add("active");
+  notify("Signed out", "info");
 }
 
-// Auth Modal Functions
-function showAuthModal() {
-    document.getElementById('authModal').style.display = 'flex';
-}
-
-function switchAuthTab(tab) {
-    document.querySelectorAll('.auth-tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.auth-form').forEach(f => f.classList.remove('active'));
-    
-    event.target.classList.add('active');
-    document.getElementById(tab + 'Form').classList.add('active');
-}
-
-// Login/Register Handlers
-function handleLogin(event) {
-    event.preventDefault();
-    const formData = new FormData(event.target);
-    
-    const loginData = {
-        email: formData.get('email'),
-        password: formData.get('password')
-    };
-    
-    fetch(`${API_BASE}/api/auth/login`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(loginData)
-    })
-    .then(response => {
-        if (!response.ok) {
-            return response.text().then(text => {
-                throw new Error(text);
-            });
-        }
-        return response.json();
-    })
-    .then(data => {
-        sessionStorage.setItem('authToken', data.token);
-        currentUser = { id: data.userId, name: data.name, email: data.email };
-        showAuthenticatedUI();
-        loadTasks();
-        event.target.reset();
-    })
-    .catch(error => {
-        console.error('Login error:', error);
-        showNotification('Login failed: ' + error.message, 'error');
-    });
-}
-
-function handleRegister(event) {
-    event.preventDefault();
-    const formData = new FormData(event.target);
-    
-    const registerData = {
-        name: formData.get('name'),
-        email: formData.get('email'),
-        password: formData.get('password'),
-        confirmPassword: formData.get('confirmPassword')
-    };
-    
-    fetch(`${API_BASE}/api/auth/register`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(registerData)
-    })
-    .then(response => {
-        if (!response.ok) {
-            return response.text().then(text => {
-                throw new Error(text);
-            });
-        }
-        return response.json();
-    })
-    .then(data => {
-        sessionStorage.setItem('authToken', data.token);
-        currentUser = { id: data.userId, name: data.name, email: data.email };
-        showAuthenticatedUI();
-        loadTasks();
-        event.target.reset();
-    })
-    .catch(error => {
-        console.error('Register error:', error);
-        showNotification('Registration failed: ' + error.message, 'error');
-    });
-}
-
-// Tab Management - FIXED VERSION
-function showTab(tabName, targetElement = null) {
-    // Remove active class from all tabs and tab contents
-    document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
-    
-    // Add active class to clicked tab and corresponding content
-    if (targetElement) {
-        targetElement.classList.add('active');
-    } else {
-        // Find the tab by data attribute or content
-        const tabElement = document.querySelector(`[onclick*="${tabName}"]`) || 
-                          document.querySelector(`.tab[data-tab="${tabName}"]`);
-        if (tabElement) {
-            tabElement.classList.add('active');
-        }
+// Restore session on page load
+window.addEventListener("DOMContentLoaded", () => {
+  const savedToken = localStorage.getItem("token");
+  const savedUser = localStorage.getItem("user");
+  if (savedToken && savedUser) {
+    try {
+      finishAuth(savedToken, JSON.parse(savedUser));
+    } catch {
+      signOut();
     }
-    
-    // Add active class to corresponding content
-    const contentElement = document.getElementById(tabName);
-    if (contentElement) {
-        contentElement.classList.add('active');
-    }
-    
-    // Load data based on tab
-    if (tabName === 'view') {
-        loadTasks();
-    } else if (tabName === 'stats') {
-        updateStatistics();
-    }
-}
-
-// Alternative function for event-driven tab switching
-function showTabFromEvent(event, tabName) {
-    event.preventDefault();
-    showTab(tabName, event.target);
-}
-
-// Task Management
-function handleAddTask(event) {
-    event.preventDefault();
-    
-    const token = sessionStorage.getItem('authToken');
-    if (!token) {
-        showNotification('Please login first', 'error');
-        return;
-    }
-    
-    const formData = new FormData(event.target);
-    
-    const taskData = {
-        description: formData.get('description'),
-        category: formData.get('category'),
-        startTime: formData.get('startTime'),
-        endTime: formData.get('endTime'),
-        priority: formData.get('priority'),
-        notes: formData.get('notes') || ''
-    };
-    
-    // Validate dates
-    const startTime = new Date(taskData.startTime);
-    const endTime = new Date(taskData.endTime);
-    
-    if (endTime <= startTime) {
-        showNotification('End time must be after start time', 'error');
-        return;
-    }
-    
-    fetch(`${API_BASE}/api/tasks/add`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + token
-        },
-        body: JSON.stringify(taskData)
-    })
-    .then(response => {
-        if (!response.ok) {
-            return response.text().then(text => {
-                throw new Error(text);
-            });
-        }
-        return response.json();
-    })
-    .then(task => {
-        showNotification('Task added successfully!', 'success');
-        event.target.reset();
-        setDefaultDateTime();
-        loadTasks();
-        
-        // Switch to view tab - FIXED
-        showTab('view');
-    })
-    .catch(error => {
-        console.error('Error adding task:', error);
-        showNotification('Failed to add task: ' + error.message, 'error');
-    });
-}
-
-function loadTasks() {
-    const token = sessionStorage.getItem('authToken');
-    if (!token) return;
-    
-    fetch(`${API_BASE}/api/tasks/all`, {
-        headers: {
-            'Authorization': 'Bearer ' + token
-        }
-    })
-    .then(response => {
-        if (!response.ok) {
-            throw new Error('Failed to load tasks');
-        }
-        return response.json();
-    })
-    .then(data => {
-        tasks = data;
-        displayTasks(tasks);
-        updateStatistics();
-    })
-    .catch(error => {
-        console.error('Error loading tasks:', error);
-        showNotification('Failed to load tasks', 'error');
-    });
-}
-
-function displayTasks(tasksToShow) {
-    const container = document.getElementById('tasksContainer');
-    
-    if (!tasksToShow || tasksToShow.length === 0) {
-        container.innerHTML = '<p style="text-align: center; color: #666; font-style: italic; padding: 40px;">No tasks found. Add your first task!</p>';
-        return;
-    }
-    
-    container.innerHTML = tasksToShow.map(task => {
-        const startTime = new Date(task.startTime);
-        const endTime = new Date(task.endTime);
-        const now = new Date();
-        const isOverdue = endTime < now && !task.done;
-        const status = task.done ? 'COMPLETED' : 'PENDING';
-        
-        return `
-            <div class="task-card ${task.priority.toLowerCase()} ${isOverdue ? 'overdue' : ''}">
-                <div class="task-header">
-                    <h3 class="task-title">${task.description}</h3>
-                    <div class="task-id">ID: ${task.id}</div>
-                    <span class="task-status ${status.toLowerCase()}">${status}</span>
-                </div>
-                
-                <div class="task-details">
-                    <div class="task-detail">
-                        <strong>Category:</strong> ${task.category}
-                    </div>
-                    <div class="task-detail">
-                        <strong>Priority:</strong> 
-                        <span class="priority-${task.priority.toLowerCase()}">${task.priority}</span>
-                    </div>
-                    <div class="task-detail">
-                        <strong>Start:</strong> ${startTime.toLocaleString()}
-                    </div>
-                    <div class="task-detail">
-                        <strong>End:</strong> ${endTime.toLocaleString()}
-                    </div>
-                </div>
-                
-                ${task.notes ? `<div class="task-detail"><strong>Notes:</strong> ${task.notes}</div>` : ''}
-                
-                <div class="task-actions">
-                    ${!task.done ? 
-                        `<button class="btn btn-success" onclick="markTaskComplete(${task.id})">✓ Complete</button>` : 
-                        `<button class="btn btn-secondary" onclick="markTaskPending(${task.id})">↻ Reopen</button>`
-                    }
-                    <button class="btn btn-primary" onclick="editTask(${task.id})">✎ Edit</button>
-                    <button class="btn btn-danger" onclick="deleteTask(${task.id})">🗑 Delete</button>
-                </div>
-            </div>
-        `;
-    }).join('');
-}
-
-function markTaskComplete(taskId) {
-    updateTaskStatus(taskId, 'COMPLETED');
-}
-
-function markTaskPending(taskId) {
-    updateTaskStatus(taskId, 'PENDING');
-}
-
-function updateTaskStatus(taskId, status) {
-    const token = sessionStorage.getItem('authToken');
-    if (!token) return;
-    
-    fetch(`${API_BASE}/api/tasks/toggle/${taskId}`, {
-        method: 'PUT',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + token
-        }
-    })
-    .then(response => {
-        if (!response.ok) {
-            throw new Error('Failed to update task status');
-        }
-        return response.json();
-    })
-    .then(() => {
-        showNotification(`Task marked as ${status.toLowerCase()}!`, 'success');
-        loadTasks();
-    })
-    .catch(error => {
-        console.error('Error updating task status:', error);
-        showNotification('Failed to update task status', 'error');
-    });
-}
-
-function deleteTask(taskId) {
-    if (!confirm('Are you sure you want to delete this task?')) {
-        return;
-    }
-    
-    const token = sessionStorage.getItem('authToken');
-    if (!token) return;
-    
-    fetch(`${API_BASE}/api/tasks/delete/${taskId}`, {
-        method: 'DELETE',
-        headers: {
-            'Authorization': 'Bearer ' + token
-        }
-    })
-    .then(response => {
-        if (!response.ok) {
-            throw new Error('Failed to delete task');
-        }
-        showNotification('Task deleted successfully!', 'success');
-        loadTasks();
-    })
-    .catch(error => {
-        console.error('Error deleting task:', error);
-        showNotification('Failed to delete task', 'error');
-    });
-}
-
-function editTask(taskId) {
-    const task = tasks.find(t => t.id === taskId);
-    if (!task) return;
-    
-    // Populate edit form
-    document.getElementById('editTaskId').value = task.id;
-    document.getElementById('editDescription').value = task.description;
-    document.getElementById('editCategory').value = task.category;
-    document.getElementById('editPriority').value = task.priority;
-    document.getElementById('editNotes').value = task.notes || '';
-    
-    // Convert timestamps to datetime-local format
-    const startTime = new Date(task.startTime);
-    const endTime = new Date(task.endTime);
-    
-    document.getElementById('editStartTime').value = formatDateTimeLocal(startTime);
-    document.getElementById('editEndTime').value = formatDateTimeLocal(endTime);
-    
-    // Show modal
-    document.getElementById('editModal').style.display = 'block';
-}
-
-function handleEditTask(event) {
-    event.preventDefault();
-    
-    const token = sessionStorage.getItem('authToken');
-    if (!token) return;
-    
-    const formData = new FormData(event.target);
-    const taskId = formData.get('taskId') || document.getElementById('editTaskId').value;
-    
-    const taskData = {
-        description: formData.get('description'),
-        category: formData.get('category'),
-        startTime: formData.get('startTime'),
-        endTime: formData.get('endTime'),
-        priority: formData.get('priority'),
-        notes: formData.get('notes') || ''
-    };
-    
-    // Validate dates
-    const startTime = new Date(taskData.startTime);
-    const endTime = new Date(taskData.endTime);
-    
-    if (endTime <= startTime) {
-        showNotification('End time must be after start time', 'error');
-        return;
-    }
-    
-    fetch(`${API_BASE}/api/tasks/edit/${taskId}`, {
-        method: 'PUT',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + token
-        },
-        body: JSON.stringify(taskData)
-    })
-    .then(response => {
-        if (!response.ok) {
-            throw new Error('Failed to update task');
-        }
-        return response.json();
-    })
-    .then(() => {
-        showNotification('Task updated successfully!', 'success');
-        closeEditModal();
-        loadTasks();
-    })
-    .catch(error => {
-        console.error('Error updating task:', error);
-        showNotification('Failed to update task: ' + error.message, 'error');
-    });
-}
-
-function closeEditModal() {
-    document.getElementById('editModal').style.display = 'none';
-}
-
-function searchTask() {
-    const taskId = document.getElementById('searchId').value;
-    if (!taskId) {
-        showNotification('Please enter a task ID', 'error');
-        return;
-    }
-    
-    const task = tasks.find(t => t.id == taskId);
-    const resultsContainer = document.getElementById('searchResults');
-    
-    if (task) {
-        displayTasks([task]);
-        resultsContainer.innerHTML = document.getElementById('tasksContainer').innerHTML;
-        showNotification('Task found!', 'success');
-    } else {
-        resultsContainer.innerHTML = '<p style="text-align: center; color: #666; padding: 40px;">No task found with ID: ' + taskId + '</p>';
-        showNotification('Task not found', 'error');
-    }
-}
-
-function applyCategorySort() {
-    const selectedCategory = document.getElementById('sortByCategory').value;
-    let filteredTasks = tasks;
-    
-    if (selectedCategory) {
-        filteredTasks = tasks.filter(task => task.category === selectedCategory);
-    }
-    
-    displayTasks(filteredTasks);
-}
-
-function updateStatistics() {
-    if (!tasks) return;
-    
-    const totalTasks = tasks.length;
-    const completedTasks = tasks.filter(task => task.done === true).length;
-    const pendingTasks = tasks.filter(task => task.done === false).length;
-    const highPriorityTasks = tasks.filter(task => task.priority === 'High').length;
-    
-    const workTasks = tasks.filter(task => task.category === 'Work').length;
-    const personalTasks = tasks.filter(task => task.category === 'Personal').length;
-    
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    
-    const todayTasks = tasks.filter(task => {
-        const taskDate = new Date(task.startTime);
-        return taskDate >= today && taskDate < tomorrow;
-    }).length;
-    
-    const overdueTasks = tasks.filter(task => {
-        const endTime = new Date(task.endTime);
-        return endTime < new Date() && task.done !== true;
-    }).length;
-    
-    // Update statistics display
-    document.getElementById('totalTasks').textContent = totalTasks;
-    document.getElementById('completedTasks').textContent = completedTasks;
-    document.getElementById('pendingTasks').textContent = pendingTasks;
-    document.getElementById('highPriorityTasks').textContent = highPriorityTasks;
-    document.getElementById('workTasks').textContent = workTasks;
-    document.getElementById('personalTasks').textContent = personalTasks;
-    document.getElementById('todayTasks').textContent = todayTasks;
-    document.getElementById('overdueTasks').textContent = overdueTasks;
-}
-
-function resetForm() {
-    document.getElementById('taskForm').reset();
-    setDefaultDateTime();
-}
-
-function setDefaultDateTime() {
-    const now = new Date();
-    const oneHourLater = new Date(now.getTime() + 60 * 60 * 1000);
-    
-    document.getElementById('startTime').value = formatDateTimeLocal(now);
-    document.getElementById('endTime').value = formatDateTimeLocal(oneHourLater);
-}
-
-function formatDateTimeLocal(date) {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    
-    return `${year}-${month}-${day}T${hours}:${minutes}`;
-}
-
-function showNotification(message, type = 'info') {
-    const notificationArea = document.getElementById('notificationArea');
-    const notification = document.createElement('div');
-    notification.className = `notification ${type === 'error' ? 'alert' : ''}`;
-    notification.textContent = message;
-    
-    notificationArea.appendChild(notification);
-    
-    setTimeout(() => {
-        if (notification.parentNode) {
-            notification.parentNode.removeChild(notification);
-        }
-    }, 5000);
-}
-
-// Close modals when clicking outside
-window.addEventListener('click', function(event) {
-    const authModal = document.getElementById('authModal');
-    const editModal = document.getElementById('editModal');
-    
-    if (event.target === authModal) {
-        authModal.style.display = 'none';
-    }
-    
-    if (event.target === editModal) {
-        editModal.style.display = 'none';
-    }
+  }
 });
+
+// ─── NAVIGATION ────────────────────────────────────────────────────────────
+function showView(name, navEl) {
+  document
+    .querySelectorAll(".view")
+    .forEach((v) => v.classList.remove("active"));
+  document
+    .querySelectorAll(".nav-item")
+    .forEach((n) => n.classList.remove("active"));
+  document.getElementById("view-" + name).classList.add("active");
+  if (navEl) navEl.classList.add("active");
+
+  if (name === "dashboard") loadDashboard();
+  if (name === "projects") loadProjects();
+  if (name === "mytasks") loadMyTasks();
+}
+
+// ─── DASHBOARD ─────────────────────────────────────────────────────────────
+async function loadDashboard() {
+  try {
+    const data = await api("GET", "/api/dashboard");
+    document.getElementById("dTotalAssigned").textContent =
+      data.totalAssignedTasks ?? 0;
+    document.getElementById("dTodo").textContent = data.todoTasks ?? 0;
+    document.getElementById("dInProgress").textContent =
+      data.inProgressTasks ?? 0;
+    document.getElementById("dDone").textContent = data.doneTasks ?? 0;
+    document.getElementById("dOverdue").textContent = data.overdueTasks ?? 0;
+
+    const list = document.getElementById("dashProjectProgress");
+    const projects = data.projectProgress || [];
+    if (projects.length === 0) {
+      list.innerHTML =
+        '<div class="empty-state"><div class="empty-icon">📁</div><p>No projects yet. Create one to get started!</p></div>';
+      return;
+    }
+    list.innerHTML = projects
+      .map((p) => {
+        const pct =
+          p.totalTasks > 0
+            ? Math.round((p.completedTasks / p.totalTasks) * 100)
+            : 0;
+        return `<div class="progress-item">
+        <div class="progress-item-header">
+          <span class="progress-item-name">${esc(p.projectName)}</span>
+          <span class="progress-pct">${pct}%</span>
+        </div>
+        <div class="progress-bar-bg"><div class="progress-bar-fill" style="width:${pct}%"></div></div>
+        <div class="progress-meta">${p.completedTasks} / ${p.totalTasks} tasks completed</div>
+      </div>`;
+      })
+      .join("");
+  } catch (err) {
+    notify("Failed to load dashboard: " + err.message, "error");
+  }
+}
+
+// ─── PROJECTS ──────────────────────────────────────────────────────────────
+async function loadProjects() {
+  closeProjectDetail();
+  try {
+    const projects = await api("GET", "/api/projects");
+    const grid = document.getElementById("projectsGrid");
+    if (!projects.length) {
+      grid.innerHTML =
+        '<div class="empty-state"><div class="empty-icon">📁</div><p>No projects yet. Create your first one!</p></div>';
+      return;
+    }
+    grid.innerHTML = projects
+      .map((p) => {
+        const role = p.currentUserRole || "MEMBER";
+        const badge =
+          role === "ADMIN"
+            ? `<span class="project-role-badge badge-admin">Admin</span>`
+            : `<span class="project-role-badge badge-member">Member</span>`;
+        return `<div class="project-card" onclick="openProject(${p.id})">
+        <div class="project-card-name">${esc(p.name)}</div>
+        <div class="project-card-desc">${esc(p.description || "")}</div>
+        <div class="project-card-footer">
+          <span>${p.memberCount} member${p.memberCount !== 1 ? "s" : ""} · ${p.progress}%</span>
+          ${badge}
+        </div>
+      </div>`;
+      })
+      .join("");
+  } catch (err) {
+    notify("Failed to load projects: " + err.message, "error");
+  }
+}
+
+function openCreateProjectModal() {
+  document.getElementById("cpName").value = "";
+  document.getElementById("cpDescription").value = "";
+  openModal("createProjectModal");
+}
+
+async function handleCreateProject(e) {
+  e.preventDefault();
+  const name = document.getElementById("cpName").value.trim();
+  const description = document.getElementById("cpDescription").value.trim();
+  try {
+    await api("POST", "/api/projects", { name, description });
+    closeModal("createProjectModal");
+    notify("Project created!", "success");
+    loadProjects();
+  } catch (err) {
+    notify("Error: " + err.message, "error");
+  }
+}
+
+async function openProject(id) {
+  try {
+    const p = await api("GET", "/api/projects/" + id);
+    currentProject = p;
+    projectMembers = p.members || [];
+
+    document.getElementById("projectsGrid").style.display = "none";
+    const detail = document.getElementById("projectDetail");
+    detail.style.display = "block";
+
+    document.getElementById("pdName").textContent = p.name;
+    document.getElementById("pdDescription").textContent = p.description || "";
+
+    const role = p.currentUserRole || "MEMBER";
+    const isAdmin = role === "ADMIN";
+    const badge = document.getElementById("pdRoleBadge");
+    badge.textContent = isAdmin ? "Admin" : "Member";
+    badge.className = `role-badge ${isAdmin ? "badge-admin" : "badge-member"}`;
+
+    // Show/hide admin-only elements
+    document.querySelectorAll(".admin-only").forEach((el) => {
+      el.style.display = isAdmin ? "" : "none";
+    });
+
+    // Pre-fill settings form
+    document.getElementById("epName").value = p.name;
+    document.getElementById("epDescription").value = p.description || "";
+
+    // Reset inner tabs
+    showInnerTab("pdTasks", document.querySelector(".inner-tab"));
+
+    await loadProjectTasks();
+    renderProjectMembers();
+  } catch (err) {
+    notify("Failed to open project: " + err.message, "error");
+  }
+}
+
+function closeProjectDetail() {
+  document.getElementById("projectsGrid").style.display = "";
+  document.getElementById("projectDetail").style.display = "none";
+  currentProject = null;
+}
+
+function showInnerTab(tabId, btn) {
+  document
+    .querySelectorAll(".inner-tab-content")
+    .forEach((c) => c.classList.remove("active"));
+  document
+    .querySelectorAll(".inner-tab")
+    .forEach((b) => b.classList.remove("active"));
+  document.getElementById(tabId).classList.add("active");
+  if (btn) btn.classList.add("active");
+}
+
+async function handleEditProject(e) {
+  e.preventDefault();
+  if (!currentProject) return;
+  const name = document.getElementById("epName").value.trim();
+  const description = document.getElementById("epDescription").value.trim();
+  try {
+    await api("PUT", "/api/projects/" + currentProject.id, {
+      name,
+      description,
+    });
+    notify("Project updated!", "success");
+    currentProject.name = name;
+    currentProject.description = description;
+    document.getElementById("pdName").textContent = name;
+    document.getElementById("pdDescription").textContent = description;
+  } catch (err) {
+    notify("Error: " + err.message, "error");
+  }
+}
+
+async function confirmDeleteProject() {
+  if (!currentProject) return;
+  if (
+    !confirm(`Delete project "${currentProject.name}"? This cannot be undone.`)
+  )
+    return;
+  try {
+    await api("DELETE", "/api/projects/" + currentProject.id);
+    notify("Project deleted", "info");
+    closeProjectDetail();
+    loadProjects();
+  } catch (err) {
+    notify("Error: " + err.message, "error");
+  }
+}
+
+// ─── PROJECT TASKS ─────────────────────────────────────────────────────────
+async function loadProjectTasks() {
+  if (!currentProject) return;
+  try {
+    tasks = await api("GET", `/api/projects/${currentProject.id}/tasks`);
+    renderTaskList("pdTaskList", tasks, true);
+  } catch (err) {
+    document.getElementById("pdTaskList").innerHTML =
+      `<div class="empty-state"><p>Failed to load tasks: ${esc(err.message)}</p></div>`;
+  }
+}
+
+function renderTaskList(containerId, tasks, inProject) {
+  const el = document.getElementById(containerId);
+  if (!tasks || !tasks.length) {
+    el.innerHTML =
+      '<div class="empty-state"><div class="empty-icon">✅</div><p>No tasks yet.</p></div>';
+    return;
+  }
+  el.innerHTML = tasks.map((t) => taskItemHTML(t, inProject)).join("");
+}
+
+function taskItemHTML(t, inProject) {
+  const today = new Date().toISOString().split("T")[0];
+  const overdue = t.dueDate && t.status !== "DONE" && t.dueDate < today;
+  const isDone = t.status === "DONE";
+  const isAdmin = currentProject && currentProject.currentUserRole === "ADMIN";
+  const canEdit =
+    inProject &&
+    (isAdmin ||
+      t.assignedUserId == currentUser?.id ||
+      t.createdByUserId == currentUser?.id);
+
+  const actions = inProject
+    ? `
+    <div class="task-actions">
+      <button class="btn btn-secondary btn-sm" onclick="openEditTaskModal(${t.id})">✏️</button>
+      ${isAdmin ? `<button class="btn btn-danger btn-sm" onclick="deleteTask(${t.id})">🗑️</button>` : ""}
+    </div>`
+    : "";
+
+  const assigneeName =
+    t.assignedUserName ||
+    (t.assignedUserId ? `#${t.assignedUserId}` : "Unassigned");
+
+  return `<div class="task-item priority-${t.priority}">
+    <div class="task-main">
+      <div class="task-title ${isDone ? "done-title" : ""}">${esc(t.title)}</div>
+      <div class="task-meta">
+        <span class="task-badge status-${t.status}">${statusLabel(t.status)}</span>
+        <span class="task-badge priority-${t.priority}-badge">${t.priority}</span>
+        ${t.dueDate ? `<span class="task-badge ${overdue ? "task-overdue" : ""}">Due: ${t.dueDate}</span>` : ""}
+        ${inProject ? `<span>👤 ${esc(assigneeName)}</span>` : ""}
+        ${t.projectName ? `<span>📁 ${esc(t.projectName)}</span>` : ""}
+      </div>
+      ${t.description ? `<div style="font-size:13px;color:#718096;margin-top:5px">${esc(t.description)}</div>` : ""}
+    </div>
+    ${actions}
+  </div>`;
+}
+
+function renderProjectMembers() {
+  const el = document.getElementById("pdMemberList");
+  const isAdmin = currentProject && currentProject.currentUserRole === "ADMIN";
+  if (!projectMembers.length) {
+    el.innerHTML =
+      '<div class="empty-state"><div class="empty-icon">👥</div><p>No members yet.</p></div>';
+    return;
+  }
+  el.innerHTML = projectMembers
+    .map((m) => {
+      const name = m.name || m.email || `User #${m.userId}`;
+      const email = m.email || "";
+      const isSelf = currentUser && m.userId == currentUser.id;
+      return `<div class="member-item">
+      <div class="member-avatar">${name[0].toUpperCase()}</div>
+      <div class="member-info">
+        <div class="member-name">${esc(name)} ${isSelf ? "(you)" : ""}</div>
+        <div class="member-email">${esc(email)}</div>
+      </div>
+      <div class="member-actions">
+        <span class="task-badge ${m.role === "ADMIN" ? "badge-admin" : "badge-member"}">${m.role}</span>
+        ${isAdmin && !isSelf ? `<button class="btn btn-danger btn-sm" onclick="removeMember(${m.userId})">Remove</button>` : ""}
+      </div>
+    </div>`;
+    })
+    .join("");
+}
+
+function openAddMemberModal() {
+  document.getElementById("amEmail").value = "";
+  openModal("addMemberModal");
+}
+
+async function handleAddMember(e) {
+  e.preventDefault();
+  if (!currentProject) return;
+  const email = document.getElementById("amEmail").value.trim();
+  try {
+    await api("POST", `/api/projects/${currentProject.id}/members`, { email });
+    notify("Member added!", "success");
+    closeModal("addMemberModal");
+    const updated = await api("GET", "/api/projects/" + currentProject.id);
+    projectMembers = updated.members || [];
+    renderProjectMembers();
+  } catch (err) {
+    notify("Error: " + err.message, "error");
+  }
+}
+
+async function removeMember(userId) {
+  if (!currentProject || !confirm("Remove this member?")) return;
+  try {
+    await api("DELETE", `/api/projects/${currentProject.id}/members/${userId}`);
+    notify("Member removed", "info");
+    projectMembers = projectMembers.filter((m) => m.userId !== userId);
+    renderProjectMembers();
+  } catch (err) {
+    notify("Error: " + err.message, "error");
+  }
+}
+
+// ─── MODAL HELPERS ─────────────────────────────────────────────────────────
+function openModal(id) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = "flex";
+}
+
+function closeModal(id) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = "none";
+}
+
+// ─── UTILS ─────────────────────────────────────────────────────────────────
+function esc(str) {
+  if (!str) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function statusLabel(status) {
+  const labels = {
+    TODO: "To Do",
+    IN_PROGRESS: "In Progress",
+    DONE: "Done",
+  };
+  return labels[status] || status;
+}
+
+// ─── TASK MODAL ─────────────────────────────────────────────────────────────
+function openCreateTaskModal() {
+  document.getElementById("tmTitle").value = "";
+  document.getElementById("tmDescription").value = "";
+  document.getElementById("tmPriority").value = "MEDIUM";
+  document.getElementById("tmStatus").value = "TODO";
+  document.getElementById("tmDueDate").value = "";
+  document.getElementById("taskModalId").value = "";
+  document.getElementById("taskModalTitle").textContent = "New Task";
+  populateAssigneeSelect();
+  openModal("taskModal");
+}
+
+function openEditTaskModal(taskId) {
+  const task = tasks.find((t) => t.id === taskId);
+  if (!task) return;
+  document.getElementById("tmTitle").value = task.title || "";
+  document.getElementById("tmDescription").value = task.description || "";
+  document.getElementById("tmPriority").value = task.priority || "MEDIUM";
+  document.getElementById("tmStatus").value = task.status || "TODO";
+  document.getElementById("tmDueDate").value = task.dueDate || "";
+  document.getElementById("taskModalId").value = taskId;
+  document.getElementById("taskModalTitle").textContent = "Edit Task";
+  populateAssigneeSelect(task.assignedUserId);
+  openModal("taskModal");
+}
+
+function populateAssigneeSelect(selectedId = null) {
+  const select = document.getElementById("tmAssignee");
+  select.innerHTML = '<option value="">Unassigned</option>';
+  projectMembers.forEach((m) => {
+    const opt = document.createElement("option");
+    opt.value = m.userId;
+    opt.textContent = m.name || m.email || `User #${m.userId}`;
+    if (m.userId == selectedId) opt.selected = true;
+    select.appendChild(opt);
+  });
+}
+
+async function handleSaveTask(e) {
+  e.preventDefault();
+  if (!currentProject) return;
+  const taskId = document.getElementById("taskModalId").value;
+  const payload = {
+    title: document.getElementById("tmTitle").value.trim(),
+    description: document.getElementById("tmDescription").value.trim(),
+    priority: document.getElementById("tmPriority").value,
+    status: document.getElementById("tmStatus").value,
+    dueDate: document.getElementById("tmDueDate").value || null,
+    assignedUserId: document.getElementById("tmAssignee").value || null,
+  };
+
+  try {
+    if (taskId) {
+      await api(
+        "PUT",
+        `/api/projects/${currentProject.id}/tasks/${taskId}`,
+        payload,
+      );
+      notify("Task updated!", "success");
+    } else {
+      await api("POST", `/api/projects/${currentProject.id}/tasks`, payload);
+      notify("Task created!", "success");
+    }
+    closeModal("taskModal");
+    loadProjectTasks();
+  } catch (err) {
+    notify("Error: " + err.message, "error");
+  }
+}
+
+async function deleteTask(taskId) {
+  if (!confirm("Delete this task?")) return;
+  try {
+    await api("DELETE", `/api/projects/${currentProject.id}/tasks/${taskId}`);
+    notify("Task deleted", "info");
+    loadProjectTasks();
+  } catch (err) {
+    notify("Error: " + err.message, "error");
+  }
+}
+
+// ─── MY TASKS ────────────────────────────────────────────────────────────────
+async function loadMyTasks() {
+  try {
+    const projects = await api("GET", "/api/projects");
+    const container = document.getElementById("myTasksContainer");
+    if (!projects.length) {
+      container.innerHTML =
+        '<div class="empty-state"><div class="empty-icon">✅</div><p>Join or create a project to see your tasks.</p></div>';
+      return;
+    }
+    const allTasks = [];
+    for (const p of projects) {
+      const tasks = await api("GET", `/api/projects/${p.id}/tasks`);
+      tasks.forEach((t) => {
+        t.projectName = p.name;
+        t.projectId = p.id;
+      });
+      allTasks.push(...tasks);
+    }
+    const myTasks = allTasks.filter(
+      (t) =>
+        currentUser &&
+        (t.assignedUserId == currentUser.id ||
+          t.createdByUserId == currentUser.id),
+    );
+    if (!myTasks.length) {
+      container.innerHTML =
+        '<div class="empty-state"><div class="empty-icon">✅</div><p>No tasks assigned to you yet.</p></div>';
+      return;
+    }
+    container.innerHTML = myTasks.map((t) => taskItemHTML(t, false)).join("");
+  } catch (err) {
+    notify("Failed to load tasks: " + err.message, "error");
+  }
+}
