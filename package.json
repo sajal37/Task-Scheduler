@@ -1,0 +1,26 @@
+{
+  "name": "task-scheduler",
+  "version": "1.0.0",
+  "description": "A full-stack project management web app with role-based access control, built on a Spring Boot microservices backend and a plain HTML/CSS/JS frontend.",
+  "main": "index.js",
+  "scripts": {
+    "test": "playwright test",
+    "test:prod": "BASE_URL=https://task-scheduler-production-36ac.up.railway.app playwright test",
+    "test:report": "playwright show-report"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sajal37/Task-Scheduler.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/sajal37/Task-Scheduler/issues"
+  },
+  "homepage": "https://github.com/sajal37/Task-Scheduler#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.59.1"
+  }
+}
