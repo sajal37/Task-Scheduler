@@ -27,6 +27,7 @@ RUN apk add --no-cache nginx
 COPY frontend/index.html /usr/share/nginx/html/
 COPY frontend/style.css /usr/share/nginx/html/
 COPY frontend/script.js /usr/share/nginx/html/
+COPY nginx.conf /etc/nginx/nginx.conf
 
 # Create startup script
 RUN echo '#!/bin/sh' > /app/start.sh && \
