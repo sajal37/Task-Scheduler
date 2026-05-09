@@ -5,6 +5,7 @@ import com.taskscheduler.userservice.dto.LoginRequest;
 import com.taskscheduler.userservice.dto.RegisterRequest;
 import com.taskscheduler.userservice.dto.UserDTO;
 import com.taskscheduler.userservice.service.AuthService;
+import com.taskscheduler.userservice.util.JwtUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -22,6 +23,9 @@ public class AuthController {
 
     @Autowired
     private AuthService authService;
+
+    @Autowired
+    private JwtUtil jwtUtil;
 
     @Value("${oauth.google.client-id:}")
     private String googleClientId;
@@ -74,10 +78,24 @@ public class AuthController {
         try {
             if (token != null && token.startsWith("Bearer ")) {
                 String jwt = token.substring(7);
-                UserDTO user = authService.getUserFromToken(jwt);
-                return new ResponseEntity<>(user, HttpStatus.OK);
+                if (!authService.validateToken(jwt)) {
+                    return new ResponseEntity<>("Invalid token", HttpStatus.UNAUTHORIZED);
+                }
+                // Extract directly from JWT claims — survives H2 data loss on redeploy
+                String email = jwtUtil.extractUsername(jwt);
+                Long userId = jwtUtil.extractUserId(jwt);
+                String name = jwtUtil.extractName(jwt);
+                if (name == null || name.isEmpty()) {
+                    try {
+                        UserDTO dbUser = authService.getCurrentUser(email);
+                        name = dbUser.getName();
+                    } catch (Exception ignored) {
+                        name = email.contains("@") ? email.split("@")[0] : email;
+                    }
+                }
+                return new ResponseEntity<>(new UserDTO(userId, name, email), HttpStatus.OK);
             }
-            return new ResponseEntity<>("Invalid token", HttpStatus.BAD_REQUEST);
+            return new ResponseEntity<>("Invalid token format", HttpStatus.BAD_REQUEST);
         } catch (Exception e) {
             return new ResponseEntity<>("Error getting user info: " + e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
         }

@@ -60,7 +60,7 @@ public class AuthService {
             throw new Exception("Invalid password");
         }
 
-        String token = jwtUtil.generateToken(user.getEmail(), user.getId());
+        String token = jwtUtil.generateToken(user.getEmail(), user.getId(), user.getName());
 
         return new AuthResponse(token, user.getId(), user.getName(), user.getEmail());
     }
@@ -93,7 +93,7 @@ public class AuthService {
 
         User savedUser = userRepository.save(user);
 
-        String token = jwtUtil.generateToken(savedUser.getEmail(), savedUser.getId());
+        String token = jwtUtil.generateToken(savedUser.getEmail(), savedUser.getId(), savedUser.getName());
 
         return new AuthResponse(token, savedUser.getId(), savedUser.getName(), savedUser.getEmail());
     }
@@ -289,7 +289,7 @@ public class AuthService {
         }
 
         user = userRepository.save(user);
-        String token = jwtUtil.generateToken(user.getEmail(), user.getId());
+        String token = jwtUtil.generateToken(user.getEmail(), user.getId(), user.getName());
 
         return new AuthResponse(token, user.getId(), user.getName(), user.getEmail());
     }

@@ -49,10 +49,12 @@ public class JwtUtil {
         return extractExpiration(token).before(new Date());
     }
 
-    public String generateToken(String username, Long userId) {
+    // Include name in token so user-info can be served without a DB lookup
+    public String generateToken(String email, Long userId, String name) {
         Map<String, Object> claims = new HashMap<>();
         claims.put("userId", userId);
-        return createToken(claims, username);
+        claims.put("name", name);
+        return createToken(claims, email);
     }
 
     private String createToken(Map<String, Object> claims, String subject) {
@@ -72,6 +74,10 @@ public class JwtUtil {
 
     public Long extractUserId(String token) {
         return extractClaim(token, claims -> claims.get("userId", Long.class));
+    }
+
+    public String extractName(String token) {
+        return extractClaim(token, claims -> claims.get("name", String.class));
     }
 
     public boolean validateToken(String token) {
