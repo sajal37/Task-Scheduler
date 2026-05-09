@@ -30,11 +30,14 @@ COPY frontend/style.css /usr/share/nginx/html/
 COPY frontend/script.js /usr/share/nginx/html/
 COPY nginx.conf /etc/nginx/nginx.conf
 
-# Startup script — CRITICAL: use PORT= not SERVER_PORT= because
-# Spring reads ${PORT:default} from application.properties
+# Common JVM flags:
+# -Djava.net.preferIPv4Stack=true → forces all JVM networking to IPv4 (Alpine defaults to IPv6)
+# -Xmx → caps heap to prevent OOM on Railway's limited RAM (~512MB shared by 3 JVMs + nginx)
 RUN cat > /app/start.sh << 'STARTEOF'
 #!/bin/sh
 set -e
+
+JAVA_OPTS="-Djava.net.preferIPv4Stack=true -XX:+UseSerialGC -XX:MaxRAMPercentage=25"
 
 wait_for_port() {
   local port=$1
@@ -53,15 +56,16 @@ wait_for_port() {
   echo "$name is ready (port $port responding)."
 }
 
-# Override PORT for each service — Railway may set PORT globally
-# but each microservice needs its own port
-PORT=8081 java -jar /app/user-service.jar &
+# Start user-service
+PORT=8081 java $JAVA_OPTS -jar /app/user-service.jar &
 wait_for_port 8081 "user-service"
 
-PORT=8082 java -jar /app/task-service.jar &
+# Start task-service
+PORT=8082 java $JAVA_OPTS -jar /app/task-service.jar &
 wait_for_port 8082 "task-service"
 
-PORT=8080 java -jar /app/api-gateway.jar &
+# Start api-gateway
+PORT=8080 java $JAVA_OPTS -jar /app/api-gateway.jar &
 wait_for_port 8080 "api-gateway"
 
 echo "All services started. Starting nginx on port 80..."
@@ -69,12 +73,4 @@ exec nginx -g "daemon off;"
 STARTEOF
 RUN chmod +x /app/start.sh
 
-RUN cat > /app/entrypoint.sh << 'ENTRYEOF'
-#!/bin/sh
-exec /app/start.sh
-ENTRYEOF
-RUN chmod +x /app/entrypoint.sh
-
-EXPOSE 80 8080 8081 8082
-
-CMD ["/app/entrypoint.sh"]
+CMD ["/app/start.sh"]
