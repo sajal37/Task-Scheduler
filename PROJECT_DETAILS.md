@@ -61,7 +61,7 @@ Task Scheduler is a microservices-based web application that:
 
 ### Microservices Architecture
 
-The application follows a microservices pattern with three core services:
+The application follows a microservices pattern with two backend services behind an Nginx reverse proxy:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -71,28 +71,29 @@ The application follows a microservices pattern with three core services:
                      │ HTTP/REST
                      ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                   API Gateway (Port 8080)                    │
-│              Spring Cloud Gateway + CORS                    │
+│                   Nginx (Port 80)                            │
+│        Reverse Proxy + Static File Serving + CORS           │
+│   /api/auth/* → :8081   |   /api/* → :8082                  │
 └───────────┬───────────────────────┬─────────────────────────┘
-            │                       │
             │                       │
             ▼                       ▼
 ┌─────────────────────┐   ┌─────────────────────┐
 │  User Service       │   │  Task Service       │
 │  (Port 8081)        │   │  (Port 8082)        │
 │  - Authentication   │   │  - Projects         │
-│  - User Management │   │  - Tasks            │
-│  - JWT Tokens      │   │  - Team Management  │
+│  - User Management  │   │  - Tasks            │
+│  - JWT Tokens       │   │  - Team Management  │
 │  - OAuth2           │   │  - Dashboard        │
 └──────────┬──────────┘   └──────────┬──────────┘
            │                         │
-           └─────────┬───────────────┘
-                     │
-                     ▼
-           ┌──────────────────┐
-           │  H2 Database     │
-           │  (In-Memory SQL) │
-           └──────────────────┘
+           │     Feign Client        │
+           │◄────────────────────────┘
+           │
+           ▼
+ ┌──────────────────┐
+ │  H2 Database     │
+ │  (In-Memory SQL) │
+ └──────────────────┘
 ```
 
 ### Service Responsibilities
@@ -113,12 +114,13 @@ The application follows a microservices pattern with three core services:
 - Dashboard statistics generation
 - Role-based access control enforcement
 
-#### API Gateway (Port 8080)
+#### Nginx Reverse Proxy (Port 80)
 
 - Single entry point for all client requests
-- Request routing to appropriate services
-- CORS configuration
-- Request/response transformation
+- Path-based routing: `/api/auth/*` → user-service, `/api/*` → task-service
+- CORS headers applied globally
+- Serves static frontend assets (HTML, CSS, JS)
+- Replaces Spring Cloud Gateway (eliminated to reduce JVM count and avoid Netty connection issues)
 
 ### Design Patterns Used
 
@@ -139,7 +141,6 @@ The application follows a microservices pattern with three core services:
 | -------------------- | ------- | ---------------------------- |
 | Java                 | 17      | Primary programming language |
 | Spring Boot          | 3.2.0   | Application framework        |
-| Spring Cloud Gateway | 3.2.0   | API Gateway                  |
 | Spring Data JPA      | 3.2.0   | Database ORM                 |
 | Spring Security      | 6.2.0   | Security framework           |
 | Spring Web           | 3.2.0   | REST API                     |
@@ -164,7 +165,7 @@ The application follows a microservices pattern with three core services:
 | ---------- | ------------------------------ |
 | Docker     | Containerization               |
 | Railway    | Cloud deployment platform      |
-| Nginx      | Static file serving (frontend) |
+| Nginx      | Reverse proxy + static serving |
 | Git        | Version control                |
 
 ---
@@ -536,14 +537,13 @@ ProjectTask (task-service)
 | ------ | -------------- | ------------------------ | ------------------- |
 | GET    | /api/dashboard | Get dashboard statistics | `DashboardResponse` |
 
-### API Gateway Routes
+### Nginx Routing Rules
 
-| Path Pattern        | Destination Service |
-| ------------------- | ------------------- |
-| /api/auth/\*\*      | user-service        |
-| /api/projects/\*\*  | task-service        |
-| /api/tasks/\*\*     | task-service        |
-| /api/dashboard/\*\* | task-service        |
+| Path Pattern        | Destination Service         |
+| ------------------- | --------------------------- |
+| /api/auth/*         | user-service (127.0.0.1:8081) |
+| /api/*              | task-service (127.0.0.1:8082) |
+| /*                  | Static frontend assets       |
 
 ### DTO Structures
 
@@ -776,6 +776,8 @@ The `script.js` file is organized into sections:
 - 24-hour token expiration (86400000 ms)
 - Token stored in localStorage (can be enhanced with httpOnly cookies)
 - Token validation on every protected endpoint
+- JWT carries `userId`, `name`, and `email` (subject) claims
+- User info extracted directly from JWT claims (stateless — survives database resets)
 
 #### Password Security
 
@@ -885,30 +887,20 @@ python -m http.server 3000
 
 #### Containerization
 
-Each service has its own Dockerfile:
+Single multi-stage Dockerfile packages all services into one container:
 
-- Multi-stage build (Maven build + JRE runtime)
-- Eclipse Temurin JRE 17 Alpine
-- Exposes appropriate ports
-- Environment variable configuration
-
-#### Railway Configuration
-
-- `railway.json`: Nixpacks builder configuration
-- `railway.toml`: Service definitions with Dockerfiles
-- Environment variables for service URLs
-- Railway PostgreSQL integration (optional)
+- **Build stages**: Separate Maven builds for user-service and task-service
+- **Runtime stage**: Eclipse Temurin JRE 17 Alpine + Nginx
+- **Start script**: Launches user-service → task-service → nginx sequentially with health checks
+- JVM flag `-Djava.net.preferIPv4Stack=true` to avoid IPv6 issues on Alpine Linux
+- `PORT` env var overridden per-service to prevent Railway port conflicts
 
 #### Deployment Steps
 
 1. Push code to GitHub
 2. Connect Railway to GitHub repository
-3. Railway auto-detects services from railway.toml
-4. Configure environment variables:
-   - `USER_SERVICE_URL`, `TASK_SERVICE_URL` in api-gateway
-   - `JWT_SECRET` in user-service and task-service
-   - OAuth credentials (optional)
-   - `API_BASE` in frontend
+3. Railway detects the root Dockerfile and builds automatically
+4. Single container runs all services (2 JVMs + nginx)
 5. Deploy and monitor logs
 
 #### Environment Variables
@@ -1054,15 +1046,17 @@ com.taskscheduler.gateway/
 ### JWT Token Generation
 
 ```java
-public String generateToken(User user) {
-    Date now = new Date();
-    Date expiryDate = new Date(now.getTime() + expiration);
+public String generateToken(String email, Long userId, String name) {
+    Map<String, Object> claims = new HashMap<>();
+    claims.put("userId", userId);
+    claims.put("name", name);  // Embedded in JWT for stateless user-info
 
     return Jwts.builder()
-        .setSubject(user.getEmail())
-        .setIssuedAt(now)
-        .setExpiration(expiryDate)
-        .signWith(SignatureAlgorithm.HS512, secret)
+        .setClaims(claims)
+        .setSubject(email)
+        .setIssuedAt(new Date())
+        .setExpiration(new Date(System.currentTimeMillis() + expiration))
+        .signWith(getSigningKey(), SignatureAlgorithm.HS512)
         .compact();
 }
 ```
@@ -1428,59 +1422,40 @@ private long countOverdue(List<ProjectTask> tasks) {
 
 ```
 Task Scheduler/
-├── api-gateway/              # API Gateway service
-│   ├── src/
-│   │   └── main/
-│   │       ├── java/
-│   │       └── resources/
-│   │           └── application.properties
-│   ├── Dockerfile
-│   └── pom.xml
+├── Dockerfile               # Single multi-stage Dockerfile (builds all services)
+├── nginx.conf               # Nginx reverse proxy config
 ├── user-service/            # User authentication service
-│   ├── src/
-│   │   └── main/
-│   │       ├── java/
-│   │       │   └── com/taskscheduler/userservice/
-│   │       │       ├── controller/
-│   │       │       ├── dto/
-│   │       │       ├── entity/
-│   │       │       ├── repository/
-│   │       │       ├── service/
-│   │       │       ├── util/
-│   │       │       ├── config/
-│   │       │       └── UserServiceApplication.java
-│   │       └── resources/
-│   │           └── application.properties
-│   ├── Dockerfile
+│   ├── src/main/java/com/taskscheduler/userservice/
+│   │   ├── controller/AuthController.java
+│   │   ├── dto/{AuthResponse,LoginRequest,RegisterRequest,UserDTO}.java
+│   │   ├── entity/User.java
+│   │   ├── repository/UserRepository.java
+│   │   ├── service/AuthService.java
+│   │   ├── util/JwtUtil.java
+│   │   ├── config/SecurityConfig.java
+│   │   └── UserServiceApplication.java
 │   └── pom.xml
 ├── task-service/            # Project and task management service
-│   ├── src/
-│   │   └── main/
-│   │       ├── java/
-│   │       │   └── com/taskscheduler/taskservice/
-│   │       │       ├── controller/
-│   │       │       ├── dto/
-│   │       │       ├── entity/
-│   │       │       ├── repository/
-│   │       │       ├── service/
-│   │       │       ├── client/
-│   │       │       ├── config/
-│   │       │       └── TaskServiceApplication.java
-│   │       └── resources/
-│   │           └── application.properties
-│   ├── Dockerfile
+│   ├── src/main/java/com/taskscheduler/taskservice/
+│   │   ├── controller/{ProjectController,ProjectTaskController,DashboardController,HealthController}.java
+│   │   ├── dto/project/{CreateProjectRequest,ProjectResponse,...}.java
+│   │   ├── dto/task/{CreateProjectTaskRequest,ProjectTaskResponse,...}.java
+│   │   ├── dto/dashboard/DashboardResponse.java
+│   │   ├── entity/{Project,ProjectMember,ProjectTask}.java
+│   │   ├── repository/{ProjectRepository,ProjectMemberRepository,ProjectTaskRepository}.java
+│   │   ├── service/{ProjectManagementService,ProjectTaskManagementService,DashboardService,UserService}.java
+│   │   ├── client/UserServiceClient.java (Feign)
+│   │   └── TaskServiceApplication.java
 │   └── pom.xml
-├── frontend/                # Static frontend
+├── api-gateway/             # (kept for local dev, not used in production)
+│   └── ...
+├── frontend/
 │   ├── index.html
 │   ├── style.css
-│   ├── script.js
-│   └── Dockerfile
-├── .dockerignore            # Docker build exclusions
-├── railway.json             # Railway configuration (JSON)
-├── railway.toml             # Railway configuration (TOML)
+│   └── script.js
 ├── start.ps1                # Local development launcher
-├── README.md                # Project documentation
-├── RAILWAY_DEPLOYMENT.md    # Deployment guide
+├── README.md
+├── RAILWAY_DEPLOYMENT.md
 └── PROJECT_DETAILS.md       # This file
 ```
 
